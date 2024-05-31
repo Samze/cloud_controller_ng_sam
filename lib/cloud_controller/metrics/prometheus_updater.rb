@@ -69,6 +69,10 @@ module VCAP::CloudController::Metrics
       @registry.get(metric).set(value, labels:)
     end
 
+    def get_gauge_metric_value(metric)
+      @registry.get(metric).values[{}]
+    end
+
     def increment_gauge_metric(metric)
       @registry.get(metric).increment
     end

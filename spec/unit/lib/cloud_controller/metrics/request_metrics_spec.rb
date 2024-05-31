@@ -32,6 +32,20 @@ module VCAP::CloudController::Metrics
 
         expect(prometheus_client).to have_received(:increment_gauge_metric).with(:cc_requests_outstanding_total)
       end
+
+      context 'when using puma' do
+        before do
+          allow(VCAP::CloudController::Config.config).to receive(:get).with(:webserver).and_return('puma')
+
+          allow(prometheus_client).to receive(:get_gauge_metric_value).and_return(5)
+        end
+
+        it 'uses the outstanding request value from prometheus for statsd gauge' do
+          request_metrics.start_request
+
+          expect(statsd_client).to have_received(:gauge).with('cc.requests.outstanding.gauge', 5)
+        end
+      end
     end
 
     describe '#complete_request' do
@@ -70,6 +84,20 @@ module VCAP::CloudController::Metrics
 
         request_metrics.complete_request(400)
         expect(batch).to have_received(:increment).with('cc.http_status.4XX')
+      end
+
+      context 'when using puma' do
+        before do
+          allow(VCAP::CloudController::Config.config).to receive(:get).with(:webserver).and_return('puma')
+        end
+
+        it 'uses the outstanding request value from prometheus for statsd gauge' do
+          allow(prometheus_client).to receive(:get_gauge_metric_value).and_return(3)
+
+          request_metrics.complete_request(200)
+
+          expect(statsd_client).to have_received(:gauge).with('cc.requests.outstanding.gauge', 3)
+        end
       end
     end
   end
