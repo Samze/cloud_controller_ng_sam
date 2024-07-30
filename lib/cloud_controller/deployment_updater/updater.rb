@@ -95,8 +95,14 @@ module VCAP::CloudController
           oldest_web_process_with_instances.lock!
           deploying_web_process.lock!
 
-          return unless ready_to_scale?
+          scale_up_to = instances_to_scale_up
+          scale_down_to = instances_to_scale_down
 
+          # binding.pry
+          # scale_by = instances_to_scale
+          # return unless scale_by > 0
+
+          # todo, only change this when something new has become healthy
           deployment.update(
             last_healthy_at: Time.now,
             state: DeploymentModel::DEPLOYING_STATE,
@@ -104,13 +110,14 @@ module VCAP::CloudController
             status_reason: DeploymentModel::DEPLOYING_STATUS_REASON
           )
 
-          if deploying_web_process.instances >= deployment.original_web_process_instance_count
+          scale_down_oldest_web_process_with_instances_2(scale_down_to)
+          scale_up_new_web_process_instances_2(scale_up_to)
+
+          if deploying_web_process.instances >= deployment.original_web_process_instance_count && all_instances_ready?
+            binding.pry
             finalize_deployment
             return
           end
-
-          scale_down_oldest_web_process_with_instances
-          deploying_web_process.update(instances: [deploying_web_process.instances + deployment.max_in_flight, deployment.original_web_process_instance_count].min)
         end
       end
 
@@ -158,7 +165,18 @@ module VCAP::CloudController
           each { |p| p.lock!.update(instances: 0) }
       end
 
-      def scale_down_oldest_web_process_with_instances
+      def scale_down_oldest_web_process_with_instances_2(scale_to)
+        process = oldest_web_process_with_instances
+
+        if scale_to == 0 && is_interim_process?(process)
+          process.destroy
+          return
+        end
+
+        process.update(instances: scale_to)
+      end
+
+      def scale_down_oldest_web_process_with_instances(scale_by)
         process = oldest_web_process_with_instances
 
         if process.instances <= deployment.max_in_flight && is_interim_process?(process)
@@ -166,7 +184,15 @@ module VCAP::CloudController
           return
         end
 
-        process.update(instances: [(process.instances - deployment.max_in_flight), 0].max)
+        process.update(instances: [(process.instances - scale_by), 0].max)
+      end
+
+      def scale_up_new_web_process_instances_2(scale_to)
+        deploying_web_process.update(instances: scale_to)
+      end
+
+      def scale_up_new_web_process_instances(scale_by)
+        deploying_web_process.update(instances: [deploying_web_process.instances + scale_by, deployment.original_web_process_instance_count].min)
       end
 
       def finalize_deployment
@@ -213,17 +239,46 @@ module VCAP::CloudController
       end
 
       def canary_ready?
-        ready_to_scale?
+        instances_ready_count >= 1
       end
 
-      def ready_to_scale?
+      def instances_to_scale
+        return deployment.max_in_flight - (deployment.deploying_web_process.instances - instances_ready_count)
+      end
+
+      def instances_to_scale_up
+        left_to_scale = deployment.original_web_process_instance_count - deployment.deploying_web_process.instances
+        
+        max_scale = [deployment.max_in_flight - (deployment.deploying_web_process.instances - instances_ready_count), 0].max
+
+        return deployment.deploying_web_process.instances + [max_scale, left_to_scale].min
+      end
+
+      def instances_to_scale_down
+        target_scale = deployment.original_web_process_instance_count
+
+        new_processes_running = instances_ready_count
+
+        scale_down = target_scale - new_processes_running
+
+        # ensure we don't scale up incase we have more processes running than we should
+        new_scale = [scale_down, oldest_web_process_with_instances.instances].min
+
+        return [new_scale, 0].max
+      end
+
+      def instances_ready_count
+        instances = instance_reporters.all_instances_for_app(deployment.deploying_web_process)
+        instances.count { |_, val| val[:state] == VCAP::CloudController::Diego::LRP_RUNNING && val[:routable] }
+      end
+
+      def all_instances_ready?
         instances = instance_reporters.all_instances_for_app(deployment.deploying_web_process)
         instances.all? { |_, val| val[:state] == VCAP::CloudController::Diego::LRP_RUNNING && val[:routable] }
       rescue CloudController::Errors::ApiError # the instances_reporter re-raises InstancesUnavailable as ApiError
-        logger.info("skipping-deployment-update-for-#{deployment.guid}")
         false
       end
-
+      
       def running_instance?(process)
         instances = instance_reporters.all_instances_for_app(process)
         instances.any? { |_, val| val[:state] == VCAP::CloudController::Diego::LRP_RUNNING }

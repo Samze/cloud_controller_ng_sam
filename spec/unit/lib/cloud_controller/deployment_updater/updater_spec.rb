@@ -31,18 +31,18 @@ module VCAP::CloudController
     let!(:deploying_route_mapping) { RouteMappingModel.make(app: web_process.app, process_type: deploying_web_process.type) }
     let(:space) { web_process.space }
     let(:original_web_process_instance_count) { 6 }
-    let(:current_web_instances) { 2 }
-    let(:current_deploying_instances) { 0 }
+    let(:current_web_instances) { 5 }
+    let(:current_deploying_instances) { 3 }
 
     let(:state) { DeploymentModel::DEPLOYING_STATE }
-
+    let(:max_in_flight) { 1 }
     let(:deployment) do
       DeploymentModel.make(
         app: web_process.app,
         deploying_web_process: deploying_web_process,
         state: state,
         original_web_process_instance_count: original_web_process_instance_count,
-        max_in_flight: 1
+        max_in_flight: max_in_flight,
       )
     end
 
@@ -51,7 +51,10 @@ module VCAP::CloudController
       {
         0 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
         1 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
-        2 => { state: 'RUNNING', uptime: 50, since: 2, routable: true }
+        2 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+        3 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+        4 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+        5 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
       }
     end
     let(:instances_reporters) { double(:instance_reporters) }
@@ -63,6 +66,13 @@ module VCAP::CloudController
     end
 
     describe '#scale' do
+      let(:current_deploying_instances) { 1 }
+      let(:current_web_instances) { 6 }
+      let(:all_instances_results) do
+        {
+          0 => { state: 'RUNNING', uptime: 50, since: 2, routable: true }
+        }
+      end
       it 'locks the deployment' do
         allow(deployment).to receive(:lock!).and_call_original
         subject.scale
@@ -75,7 +85,7 @@ module VCAP::CloudController
           subject.scale
         end.to change {
           web_process.reload.instances
-        }.by(-1)
+      }.by(-1)
       end
 
       it 'scales up the new web process by one' do
@@ -87,6 +97,14 @@ module VCAP::CloudController
       end
 
       context 'when the max_in_flight is set to 2' do
+        let(:current_deploying_instances) { 2 }
+        let(:current_web_instances) { 6 }
+        let(:all_instances_results) do
+          {
+            0 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            1 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+          }
+        end
         let(:deployment) do
           DeploymentModel.make(
             app: web_process.app,
@@ -116,6 +134,16 @@ module VCAP::CloudController
 
       context 'when max_in_flight is larger than the number of remaining desired instances' do
         let(:current_deploying_instances) { 5 }
+        let(:all_instances_results) do
+          {
+            0 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            1 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            2 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            3 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            4 => { state: 'RUNNING', uptime: 50, since: 2, routable: true }
+          }
+        end
+
         let(:deployment) do
           DeploymentModel.make(
             app: web_process.app,
@@ -131,19 +159,30 @@ module VCAP::CloudController
             subject.scale
           end.to change {
             deploying_web_process.reload.instances
-          }.by(1)
+        }.to(6)
         end
 
-        it 'scales the old web process down to 0' do
+        it 'scales the old web process down to 1' do
           expect do
             subject.scale
           end.to change {
             web_process.reload.instances
-          }.to(0)
+          }.to(1)
         end
       end
 
       context 'when the max_in_flight is more than the total number of process instances' do
+        let(:all_instances_results) do
+          {
+            0 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            1 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            2 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            3 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            4 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            5 => { state: 'RUNNING', uptime: 50, since: 2, routable: true }
+          }
+        end
+
         let(:deployment) do
           DeploymentModel.make(
             app: web_process.app,
@@ -159,7 +198,7 @@ module VCAP::CloudController
             subject.scale
           end.to change {
             deploying_web_process.reload.instances
-          }.by(original_web_process_instance_count)
+          }.to(original_web_process_instance_count)
         end
 
         it 'scales the old web process down to 0' do
@@ -168,6 +207,162 @@ module VCAP::CloudController
           end.to change {
             web_process.reload.instances
           }.to(0)
+        end
+      end
+
+      context 'when max_in_flight is set and a single instance is running' do
+        let(:current_deploying_instances) { 2 }
+        let(:current_web_instances) { 6 }
+        let(:all_instances_results) do
+          {
+            0 => { state: 'STARTING' },
+            1 => { state: 'RUNNING', uptime: 50, since: 2, routable: true }
+          }
+        end
+
+        let(:deployment) do
+          DeploymentModel.make(
+            app: web_process.app,
+            deploying_web_process: deploying_web_process,
+            state: 'DEPLOYING',
+            original_web_process_instance_count: original_web_process_instance_count,
+            max_in_flight: 2
+          )
+        end
+
+        it 'scales up the new web process by one' do
+          expect do
+            subject.scale
+          end.to change {
+            deploying_web_process.reload.instances
+          }.by(1)
+        end
+
+        it 'scales the old web process down by one' do
+          expect do
+            subject.scale
+          end.to change {
+              web_process.reload.instances
+          }.by(-1)
+        end
+      end
+
+      context 'when max_in_flight is set and multiple instances are running' do
+        let(:current_deploying_instances) { 4 }
+        let(:current_web_instances) { 6 }
+        let(:all_instances_results) do
+          {
+            0 => { state: 'STARTING' },
+            1 => { state: 'STARTING' },
+            2 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            3 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+          }
+        end
+
+        let(:deployment) do
+          DeploymentModel.make(
+            app: web_process.app,
+            deploying_web_process: deploying_web_process,
+            state: 'DEPLOYING',
+            original_web_process_instance_count: original_web_process_instance_count,
+            max_in_flight: 4
+          )
+        end
+
+        it 'scales up the new web process by 2' do
+          expect do
+            subject.scale
+          end.to change {
+            deploying_web_process.reload.instances
+          }.by(2)
+        end
+
+        it 'scales the old web process down by 2' do
+          expect do
+            subject.scale
+          end.to change {
+              web_process.reload.instances
+          }.by(-2)
+        end
+      end
+
+      context 'when max_in_flight is set and multiple instances are running' do
+        let(:current_deploying_instances) { 4 }
+        let(:current_web_instances) { 6 }
+        let(:all_instances_results) do
+          {
+            0 => { state: 'STARTING' },
+            1 => { state: 'STARTING' },
+            2 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            3 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+          }
+        end
+
+        let(:deployment) do
+          DeploymentModel.make(
+            app: web_process.app,
+            deploying_web_process: deploying_web_process,
+            state: 'DEPLOYING',
+            original_web_process_instance_count: original_web_process_instance_count,
+            max_in_flight: 4
+          )
+        end
+
+        it 'scales up the new web process by 2' do
+          expect do
+            subject.scale
+          end.to change {
+            deploying_web_process.reload.instances
+          }.by(2)
+        end
+
+        it 'scales the old web process down by 2' do
+          expect do
+            subject.scale
+          end.to change {
+              web_process.reload.instances
+          }.by(-2)
+        end
+      end
+
+      context 'when max_in_flight is set and all desired instances are starting' do
+        let(:current_deploying_instances) { 6 }
+        let(:current_web_instances) { 2 }
+        let(:all_instances_results) do
+          {
+            0 => { state: 'STARTING' },
+            1 => { state: 'STARTING' },
+            2 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            3 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            4 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            5 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+          }
+        end
+
+        let(:deployment) do
+          DeploymentModel.make(
+            app: web_process.app,
+            deploying_web_process: deploying_web_process,
+            state: 'DEPLOYING',
+            original_web_process_instance_count: original_web_process_instance_count,
+            max_in_flight: 4
+          )
+        end
+
+        it 'scales up the new web process by 0' do
+          expect do
+            subject.scale
+          end.to change {
+            deploying_web_process.reload.instances
+          }.by(0)
+        end
+
+        it 'scales the old web process down by 0' do
+          expect do
+            subject.scale
+          end.to change {
+              web_process.reload.instances
+          }.by(0)
         end
       end
 
@@ -182,6 +377,17 @@ module VCAP::CloudController
         end
 
         let(:current_deploying_instances) { original_web_process_instance_count }
+        let(:max_in_flight) { 3 }
+        let(:all_instances_results) do
+          {
+            0 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            1 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            2 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            3 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            4 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            5 => { state: 'RUNNING', uptime: 50, since: 2, routable: true }
+          }
+        end
 
         let!(:interim_deploying_web_process) do
           ProcessModel.make(
@@ -293,7 +499,17 @@ module VCAP::CloudController
 
       context 'when the (oldest) web process will be at zero instances and is type web' do
         let(:current_web_instances) { 1 }
-        let(:current_deploying_instances) { 3 }
+        let(:current_deploying_instances) { 6 }
+        let(:all_instances_results) do
+          {
+            0 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            1 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            2 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            3 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            4 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            5 => { state: 'RUNNING', uptime: 50, since: 2, routable: true }
+          }
+        end
 
         it 'does not destroy the web process, but scales it to 0' do
           subject.scale
@@ -325,7 +541,18 @@ module VCAP::CloudController
       end
 
       context 'when the oldest web process will be at zero instances' do
-        let(:current_deploying_instances) { 3 }
+        let(:current_deploying_instances) { 6 }
+        let(:current_web_instances) { 1 }
+        let(:all_instances_results) do
+          {
+            0 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            1 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            2 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            3 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            4 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
+            5 => { state: 'RUNNING', uptime: 50, since: 2, routable: true }
+          }
+        end
         let!(:web_process) do
           ProcessModel.make(
             guid: 'web_process',
@@ -351,10 +578,11 @@ module VCAP::CloudController
 
         let!(:oldest_label) { ProcessLabelModel.make(resource_guid: oldest_web_process_with_instances.guid, key_name: 'test', value: 'bommel') }
 
-        it 'destroys the oldest web process and ignores the original web process' do
+        fit 'destroys the oldest web process and ignores the original web process' do
           expect do
             subject.scale
           end.not_to(change { ProcessModel.find(guid: web_process.guid) })
+
           expect(ProcessModel.find(guid: oldest_web_process_with_instances.guid)).to be_nil
           expect(oldest_label).not_to exist
         end
@@ -362,6 +590,7 @@ module VCAP::CloudController
 
       context 'when one of the deploying_web_process instances is starting' do
         let(:current_deploying_instances) { 3 }
+        let(:current_web_instances) { 5 }
         let(:all_instances_results) do
           {
             0 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
@@ -387,6 +616,7 @@ module VCAP::CloudController
 
       context 'when one of the deploying_web_process instances is not routable' do
         let(:current_deploying_instances) { 3 }
+        let(:current_web_instances) { 5 }
         let(:all_instances_results) do
           {
             0 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
@@ -412,6 +642,7 @@ module VCAP::CloudController
 
       context 'when one of the deploying_web_process instances is failing' do
         let(:current_deploying_instances) { 3 }
+        let(:current_web_instances) { 5 }
         let(:all_instances_results) do
           {
             0 => { state: 'RUNNING', uptime: 50, since: 2, routable: true },
@@ -584,12 +815,12 @@ module VCAP::CloudController
             )
           end
 
-          it 'scales up the coerced web process by the maximum original web process count' do
+          it 'scales up the coerced web process to the maximum original web process count' do
             expect do
               subject.scale
             end.to change {
               deploying_web_process.reload.instances
-            }.by(original_web_process_instance_count)
+            }.to(original_web_process_instance_count)
           end
         end
       end
