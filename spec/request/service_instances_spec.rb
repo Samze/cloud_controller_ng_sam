@@ -273,22 +273,102 @@ RSpec.describe 'V3 service instances' do
           check_filtered_instances(create_managed_json(msi_1))
         end
 
-        it 'filters by space guid' do
-          get "/v3/service_instances?space_guids=#{another_space.guid}", nil, admin_headers
-          check_filtered_instances(
-            create_managed_json(msi_2),
-            create_user_provided_json(upsi_2),
-            create_managed_json(ssi)
-          )
+        context 'filters by space guid' do
+          let(:api_call) do
+            ->(headers) { get "/v3/service_instances?space_guids=#{another_space.guid}", nil, headers }
+          end
+          let(:headers) { admin_headers }
+
+          describe 'filters correctly with different permissions' do
+            let(:all_instances) do
+              {
+                code: 200,
+                response_objects: [
+                  create_managed_json(msi_2),
+                  create_user_provided_json(upsi_2),
+                  create_managed_json(ssi)
+                ]
+              }
+            end
+
+            let(:space_instances) do
+              {
+                code: 200,
+                response_objects: [
+                  create_managed_json(ssi)
+                ]
+              }
+            end
+
+            let(:expected_codes_and_responses) do
+              h = Hash.new(
+                code: 200,
+                response_objects: []
+              )
+
+              h['admin'] = all_instances
+              h['admin_read_only'] = all_instances
+              h['global_auditor'] = all_instances
+              h['space_supporter'] = space_instances
+              h['space_developer'] = space_instances
+              h['space_manager'] = space_instances
+              h['space_auditor'] = space_instances
+              h['org_manager'] = space_instances
+
+              h
+            end
+
+            it_behaves_like 'permissions for list endpoint', ALL_PERMISSIONS
+          end
         end
 
-        it 'filters by organization guids' do
-          get "/v3/service_instances?organization_guids=#{another_space.organization.guid}", nil, admin_headers
-          check_filtered_instances(
-            create_managed_json(msi_2),
-            create_user_provided_json(upsi_2),
-            create_managed_json(ssi)
-          )
+        context 'filters by organization guids' do
+          let(:api_call) do
+            ->(headers) { get "/v3/service_instances?organization_guids=#{another_space.organization.guid}", nil, headers }
+          end
+          let(:headers) { admin_headers }
+
+          describe 'filters correctly with different permissions' do
+            let(:all_instances) do
+              {
+                code: 200,
+                response_objects: [
+                  create_managed_json(msi_2),
+                  create_user_provided_json(upsi_2),
+                  create_managed_json(ssi)
+                ]
+              }
+            end
+
+            let(:space_instances) do
+              {
+                code: 200,
+                response_objects: [
+                  create_managed_json(ssi)
+                ]
+              }
+            end
+
+            let(:expected_codes_and_responses) do
+              h = Hash.new(
+                code: 200,
+                response_objects: []
+              )
+
+              h['admin'] = all_instances
+              h['admin_read_only'] = all_instances
+              h['global_auditor'] = all_instances
+              h['space_supporter'] = space_instances
+              h['space_developer'] = space_instances
+              h['space_manager'] = space_instances
+              h['space_auditor'] = space_instances
+              h['org_manager'] = space_instances
+
+              h
+            end
+
+            it_behaves_like 'permissions for list endpoint', ALL_PERMISSIONS
+          end
         end
 
         it 'filters by label' do

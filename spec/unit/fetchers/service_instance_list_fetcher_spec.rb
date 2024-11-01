@@ -62,7 +62,7 @@ module VCAP::CloudController
           end
         end
 
-        context 'by space_guids' do
+       context 'by space_guids' do
           let(:filters) { { space_guids: [space_1.guid, 'no-such-space-guid'] } }
 
           it 'returns instances with matching space guids' do
