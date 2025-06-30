@@ -1,6 +1,7 @@
 require 'cloud_controller/deployment_updater/actions/scale'
 require 'cloud_controller/deployment_updater/actions/cancel'
 require 'cloud_controller/deployment_updater/actions/finalize'
+require 'cloud_controller/deployment_updater/actions/recreate'
 
 module VCAP::CloudController
   module DeploymentUpdater
@@ -14,13 +15,7 @@ module VCAP::CloudController
 
       def scale
         with_error_logging('error-scaling-deployment') do
-          if deployment.strategy == DeploymentModel::RECREATE_STRATEGY
-            logger.info("recreating deployment for -#{deployment.guid}")
-            finished = Actions::Recreate.new(deployment, logger, deployment.desired_web_instances).call
-          else
-            finished = Actions::Scale.new(deployment, logger, deployment.desired_web_instances).call
-          end
-
+          finished = Actions::Scale.new(deployment, logger, deployment.desired_web_instances).call
           Actions::Finalize.new(deployment).call if finished
           logger.info("ran-deployment-update-for-#{deployment.guid}")
         end
@@ -41,6 +36,14 @@ module VCAP::CloudController
           logger.info("ran-canarying-deployment-for-#{deployment.guid}")
         end
       end
+
+      def recreate
+        # with_error_logging('error-recreating-deployment') do
+        #   finished = Actions::Recreate.new(deployment, logger, deployment.desired_web_instances).call
+        #   Actions::Finalize.new(deployment).call if finished
+        #   logger.info("ran-deployment-update-for-#{deployment.guid}")
+        # end
+      end 
 
       def cancel
         with_error_logging('error-canceling-deployment') do

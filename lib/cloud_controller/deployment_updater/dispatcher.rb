@@ -9,9 +9,14 @@ module VCAP::CloudController
           logger = Steno.logger('cc.deployment_updater.update')
           logger.info('run-deployment-update')
 
-          deployments_to_scale = DeploymentModel.where(state: DeploymentModel::DEPLOYING_STATE).all
-          deployments_to_cancel = DeploymentModel.where(state: DeploymentModel::CANCELING_STATE).all
+          # deploying = DeploymentModel.where(state: DeploymentModel::DEPLOYING_STATE)
+
+          # deployments_to_scale = deploying.exclude(strategy: DeploymentModel::RECREATE_STRATEGY).all
+          # deployments_to_recreate = deploying.where(strategy: DeploymentModel::RECREATE_STRATEGY).all
+
           deployments_to_canary = DeploymentModel.where(state: DeploymentModel::PREPAUSED_STATE).all
+          deployments_to_cancel = DeploymentModel.where(state: DeploymentModel::CANCELING_STATE).all
+          deployments_to_scale = DeploymentModel.where(state: DeploymentModel::DEPLOYING_STATE).all
 
           begin
             workpool = WorkPool.new(50)
@@ -29,6 +34,13 @@ module VCAP::CloudController
                 Updater.new(d, l).canary
               end
             end
+
+            # logger.info("recreating #{deployments_to_recreate.size} deployments")
+            # deployments_to_recreate.each do |deployment|
+            #   workpool.submit(deployment, logger) do |d, l|
+            #     Updater.new(d, l).recreate
+            #   end
+            # end
 
             logger.info("canceling #{deployments_to_cancel.size} deployments")
             deployments_to_cancel.each do |deployment|

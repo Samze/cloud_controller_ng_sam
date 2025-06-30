@@ -42,7 +42,7 @@ module VCAP::CloudController
             user_audit_info
           )
 
-          if app.stopped?
+          if app.stopped? || message.strategy == DeploymentModel::RECREATE_STRATEGY
             process = app.newest_web_process
           else
             process_instances = starting_process_instances(deployment, desired_instances(app.oldest_web_process, previous_deployment))
@@ -63,6 +63,20 @@ module VCAP::CloudController
             deployment.update(state: DeploymentModel::DEPLOYED_STATE,
                               status_value: DeploymentModel::FINALIZED_STATUS_VALUE,
                               status_reason: DeploymentModel::DEPLOYED_STATUS_REASON)
+            record_audit_event(deployment, target_state.droplet, user_audit_info, message)
+            return deployment
+          end
+
+          if message.strategy == DeploymentModel::RECREATE_STRATEGY
+            process.instances = message.web_instances if message.web_instances
+
+            process.save_changes
+
+            AppRestart.restart(app: app, config: Config.config, user_audit_info: user_audit_info)
+
+            # to be more proper, should this set deploying and let cc_updater sort this out
+            deployment.update(state: DeploymentModel::DEPLOYING_STATE,
+                              status_value: DeploymentModel::ACTIVE_STATUS_VALUE)
             record_audit_event(deployment, target_state.droplet, user_audit_info, message)
             return deployment
           end
@@ -248,7 +262,7 @@ module VCAP::CloudController
                                    desired_instances
                                  end
         if deployment.strategy == DeploymentModel::RECREATE_STRATEGY
-          starting_process_count
+          0 # todo: think about this.
         else
           [deployment.max_in_flight, starting_process_count].min
         end
